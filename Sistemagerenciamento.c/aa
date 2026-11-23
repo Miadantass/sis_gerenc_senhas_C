@@ -1,0 +1,269 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+
+#define MAX_FILA 500
+#define TAM_NOME 100
+
+typedef struct {
+    char categoria;          /* 'U', 'P' ou 'N' */
+    int numero;              /* sequencial por categoria */
+    char nome[TAM_NOME];
+    int idade;
+    char genero;             /* 'M', 'F' ou 'O' */
+    int gestante;
+    int necessidadeEspecial;
+} Senha;
+
+typedef struct {
+    Senha itens[MAX_FILA];
+    int inicio;
+    int fim;
+    int quantidade;
+} Fila;
+
+/* ---------- Estado global ---------- */
+static Fila filaU, filaP, filaN;
+static int contU = 0, contP = 0, contN = 0;
+static int totalAtendidos = 0;
+
+/* ---------- Utilitários de entrada ---------- */
+static void limparBuffer(void) {
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF);
+}
+
+static void lerLinha(const char *prompt, char *dest, int tamanho) {
+    for (;;) {
+        printf("%s", prompt);
+        if (fgets(dest, tamanho, stdin) == NULL) {
+            dest[0] = '\0';
+            return;
+        }
+        size_t len = strlen(dest);
+        if (len > 0 && dest[len - 1] == '\n') {
+            dest[len - 1] = '\0';
+        } else {
+            limparBuffer(); /* linha maior que o buffer */
+        }
+        /* remove espaços nas pontas */
+        char *ini = dest;
+        while (*ini && isspace((unsigned char)*ini)) ini++;
+        memmove(dest, ini, strlen(ini) + 1);
+        len = strlen(dest);
+        while (len > 0 && isspace((unsigned char)dest[len - 1])) dest[--len] = '\0';
+
+        if (len > 0) return;
+        printf("  [ERRO] Entrada vazia. Tente novamente.\n");
+    }
+}
+
+static int lerInteiro(const char *prompt, int min, int max) {
+    char buf[64];
+    for (;;) {
+        printf("%s", prompt);
+        if (fgets(buf, sizeof(buf), stdin) == NULL) return min;
+        if (strchr(buf, '\n') == NULL) limparBuffer();
+
+        char *fim;
+        long v = strtol(buf, &fim, 10);
+        while (*fim && isspace((unsigned char)*fim)) fim++;
+
+        if (fim == buf || *fim != '\0') {
+            printf("  [ERRO] Digite apenas numeros.\n");
+        } else if (v < min || v > max) {
+            printf("  [ERRO] Valor deve estar entre %d e %d.\n", min, max);
+        } else {
+            return (int)v;
+        }
+    }
+}
+
+static int lerSimNao(const char *prompt) {
+    char buf[32];
+    for (;;) {
+        printf("%s (S/N): ", prompt);
+        if (fgets(buf, sizeof(buf), stdin) == NULL) return 0;
+        if (strchr(buf, '\n') == NULL) limparBuffer();
+        char c = toupper((unsigned char)buf[0]);
+        if ((c == 'S' || c == 'N') && (buf[1] == '\n' || buf[1] == '\0'))
+            return c == 'S';
+        printf("  [ERRO] Responda apenas com S ou N.\n");
+    }
+}
+
+static char lerGenero(void) {
+    char buf[32];
+    for (;;) {
+        printf("Genero (M = Masculino, F = Feminino, O = Outro): ");
+        if (fgets(buf, sizeof(buf), stdin) == NULL) return 'O';
+        if (strchr(buf, '\n') == NULL) limparBuffer();
+        char c = toupper((unsigned char)buf[0]);
+        if ((c == 'M' || c == 'F' || c == 'O') && (buf[1] == '\n' || buf[1] == '\0'))
+            return c;
+        printf("  [ERRO] Opcao invalida. Use M, F ou O.\n");
+    }
+}
+
+/* ---------- Operacoes de fila ---------- */
+static void iniciarFila(Fila *f) {
+    f->inicio = 0;
+    f->fim = 0;
+    f->quantidade = 0;
+}
+
+static int filaCheia(const Fila *f)  { return f->quantidade == MAX_FILA; }
+static int filaVazia(const Fila *f)  { return f->quantidade == 0; }
+
+static int enfileirar(Fila *f, Senha s) {
+    if (filaCheia(f)) return 0;
+    f->itens[f->fim] = s;
+    f->fim = (f->fim + 1) % MAX_FILA;
+    f->quantidade++;
+    return 1;
+}
+
+static int desenfileirar(Fila *f, Senha *saida) {
+    if (filaVazia(f)) return 0;
+    *saida = f->itens[f->inicio];
+    f->inicio = (f->inicio + 1) % MAX_FILA;
+    f->quantidade--;
+    return 1;
+}
+
+/* Retorna ponteiro para a proxima senha (U > P > N) sem remover; NULL se nao houver */
+static Fila *filaPrioritaria(void) {
+    if (!filaVazia(&filaU)) return &filaU;
+    if (!filaVazia(&filaP)) return &filaP;
+    if (!filaVazia(&filaN)) return &filaN;
+    return NULL;
+}
+
+/* ---------- Painel e menu ---------- */
+static void exibirPainel(void) {
+    Fila *f = filaPrioritaria();
+
+    printf("\n==================================================\n");
+    printf("      CLINICA DE ESPECIALIDADES MEDICAS\n");
+    printf("==================================================\n");
+    if (f != NULL) {
+        Senha *s = &f->itens[f->inicio];
+        printf("  PROXIMA SENHA: %c%03d  -  %s\n", s->categoria, s->numero, s->nome);
+    } else {
+        printf("  PROXIMA SENHA: --- (nenhuma senha aguardando)\n");
+    }
+    printf("--------------------------------------------------\n");
+    printf("  Aguardando -> U: %d | P: %d | N: %d\n",
+           filaU.quantidade, filaP.quantidade, filaN.quantidade);
+    printf("  Total atendidos: %d\n", totalAtendidos);
+    printf("==================================================\n");
+}
+
+static void exibirMenu(void) {
+    printf("\n  01 - Retirar senha\n");
+    printf("  02 - Registrar atendimento\n");
+    printf("  00 - Sair\n");
+}
+
+/* ---------- Funcionalidades ---------- */
+static void retirarSenha(void) {
+    Senha s;
+    memset(&s, 0, sizeof(s));
+
+    printf("\n--- RETIRADA DE SENHA ---\n");
+    lerLinha("Nome completo: ", s.nome, TAM_NOME);
+    s.idade = lerInteiro("Idade (0 a 120): ", 0, 120);
+    s.genero = lerGenero();
+
+    if (s.genero == 'F') {
+        s.gestante = lerSimNao("A paciente esta gestante?");
+    }
+    s.necessidadeEspecial = lerSimNao("Possui alguma necessidade especial?");
+
+    /* Classificacao */
+    if (s.idade > 80) {
+        s.categoria = 'U';
+    } else if (s.gestante || s.necessidadeEspecial) {
+        s.categoria = 'P';
+    } else {
+        s.categoria = 'N';
+    }
+
+    Fila *fila;
+    int *contador;
+    switch (s.categoria) {
+        case 'U': fila = &filaU; contador = &contU; break;
+        case 'P': fila = &filaP; contador = &contP; break;
+        default:  fila = &filaN; contador = &contN; break;
+    }
+
+    if (filaCheia(fila)) {
+        printf("\n  [ERRO] A fila da categoria %c esta cheia. Procure a recepcao.\n", s.categoria);
+        return;
+    }
+    if (*contador >= 999) {
+        printf("\n  [ERRO] Limite de 999 senhas da categoria %c atingido.\n", s.categoria);
+        return;
+    }
+
+    s.numero = ++(*contador);
+    enfileirar(fila, s);
+
+    printf("\n  ***************************************\n");
+    printf("   SENHA GERADA: %c%03d\n", s.categoria, s.numero);
+    printf("   Paciente....: %s\n", s.nome);
+    printf("   Posicao na fila %c: %d\n", s.categoria, fila->quantidade);
+    printf("  ***************************************\n");
+}
+
+static void registrarAtendimento(void) {
+    Fila *f = filaPrioritaria();
+
+    printf("\n--- REGISTRAR ATENDIMENTO ---\n");
+    if (f == NULL) {
+        printf("  [AVISO] Nao ha senhas aguardando atendimento.\n");
+        return;
+    }
+
+    Senha atendida;
+    desenfileirar(f, &atendida);
+    totalAtendidos++;
+
+    printf("  Chamando senha %c%03d - %s\n", atendida.categoria, atendida.numero, atendida.nome);
+    printf("  Atendimento registrado com sucesso (status: ATENDIDO).\n");
+
+    if (filaPrioritaria() == NULL) {
+        printf("  [AVISO] Nao ha mais senhas aguardando.\n");
+    }
+}
+
+/* ---------- Programa principal ---------- */
+int main(void) {
+    iniciarFila(&filaU);
+    iniciarFila(&filaP);
+    iniciarFila(&filaN);
+
+    int opcao;
+    do {
+        exibirPainel();
+        exibirMenu();
+        opcao = lerInteiro("\nEscolha uma opcao: ", -9999, 9999);
+
+        switch (opcao) {
+            case 1:
+                retirarSenha();
+                break;
+            case 2:
+                registrarAtendimento();
+                break;
+            case 0:
+                printf("\nEncerrando o sistema. Ate logo!\n");
+                break;
+            default:
+                printf("\n  [ERRO] Opcao invalida. Escolha 01, 02 ou 00.\n");
+        }
+    } while (opcao != 0);
+
+    return 0;
+}
